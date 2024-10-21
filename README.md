@@ -141,10 +141,3 @@ A resposta será um JSON contendo a duração do áudio e o arquivo convertido e
 ## Licença
 
 Este projeto está sob a licença [MIT](LICENSE).
-
-### Resumo do Conteúdo:
-- **Requisitos**: Dependências necessárias (Go, Docker, FFmpeg).
-- **Instalação**: Como clonar o repositório, instalar dependências e configurar o arquivo `.env`.
-- **Rodando o projeto**: Instruções para rodar o projeto localmente ou via Docker.
-- **Como usar**: Exemplos de como fazer requisições para o serviço com `form-data`, `base64` ou URL, e o formato de resposta.
-- **Licença**: Incluir uma seção para a licença, se aplicável.
