@@ -6,22 +6,44 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
-func validateAPIKey(c *gin.Context) bool {
-	apiKey := os.Getenv("API_KEY")
+var (
+	apiKey     string
+	httpClient = &http.Client{}
+	bufferPool = sync.Pool{
+		New: func() interface{} {
+			return new(bytes.Buffer)
+		},
+	}
+)
+
+func init() {
+	// Carrega o arquivo .env
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Println("Erro ao carregar o arquivo .env")
+	}
+
+	// Inicializa a variável apiKey
+	apiKey = os.Getenv("API_KEY")
 	if apiKey == "" {
 		fmt.Println("API_KEY não configurada no arquivo .env")
+	}
+}
+
+func validateAPIKey(c *gin.Context) bool {
+	if apiKey == "" {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erro interno no servidor"})
 		return false
 	}
@@ -43,22 +65,28 @@ func validateAPIKey(c *gin.Context) bool {
 func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 	cmd := exec.Command("ffmpeg", "-i", "pipe:0", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-f", "ogg", "pipe:1")
 
-	var outBuffer bytes.Buffer
-	var errBuffer bytes.Buffer
+	outBuffer := bufferPool.Get().(*bytes.Buffer)
+	errBuffer := bufferPool.Get().(*bytes.Buffer)
+	defer bufferPool.Put(outBuffer)
+	defer bufferPool.Put(errBuffer)
+
+	outBuffer.Reset()
+	errBuffer.Reset()
 
 	cmd.Stdin = bytes.NewReader(inputData)
-	cmd.Stdout = &outBuffer
-	cmd.Stderr = &errBuffer
+	cmd.Stdout = outBuffer
+	cmd.Stderr = errBuffer
 
 	err := cmd.Run()
 	if err != nil {
 		return nil, 0, fmt.Errorf("error during conversion: %v, details: %s", err, errBuffer.String())
 	}
 
-	convertedData := outBuffer.Bytes()
+	convertedData := make([]byte, outBuffer.Len())
+	copy(convertedData, outBuffer.Bytes())
 
+	// Parsing da duração
 	outputText := errBuffer.String()
-
 	splitTime := strings.Split(outputText, "time=")
 
 	if len(splitTime) < 2 {
@@ -66,7 +94,7 @@ func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 	}
 
 	re := regexp.MustCompile(`(\d+):(\d+):(\d+\.\d+)`)
-	matches := re.FindStringSubmatch(string(splitTime[2]))
+	matches := re.FindStringSubmatch(splitTime[2])
 	if len(matches) != 4 {
 		return nil, 0, errors.New("formato de duração não encontrado")
 	}
@@ -79,77 +107,57 @@ func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 	return convertedData, duration, nil
 }
 
+func fetchAudioFromURL(url string) ([]byte, error) {
+	resp, err := httpClient.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
+func getInputData(c *gin.Context) ([]byte, error) {
+	if file, _, err := c.Request.FormFile("file"); err == nil {
+		return io.ReadAll(file)
+	}
+
+	if base64Data := c.PostForm("base64"); base64Data != "" {
+		return base64.StdEncoding.DecodeString(base64Data)
+	}
+
+	if url := c.PostForm("url"); url != "" {
+		return fetchAudioFromURL(url)
+	}
+
+	return nil, errors.New("Nenhum arquivo, base64 ou URL fornecido")
+}
+
 func processAudio(c *gin.Context) {
 	if !validateAPIKey(c) {
 		return
 	}
 
-	var inputData []byte
-	var err error
-
-	// Verifica se o arquivo foi enviado como form-data
-	file, _, err := c.Request.FormFile("file")
-	if err == nil {
-		inputData, err = ioutil.ReadAll(file)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Erro ao ler o arquivo"})
-			return
-		}
-	} else {
-		// Verifica se foi enviado um base64
-		base64Data := c.PostForm("base64")
-		if base64Data != "" {
-			inputData, err = base64.StdEncoding.DecodeString(base64Data)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Erro ao decodificar base64"})
-				return
-			}
-		} else {
-			// Verifica se foi enviada uma URL
-			url := c.PostForm("url")
-			if url != "" {
-				resp, err := http.Get(url)
-				if err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Erro ao obter o arquivo da URL"})
-					return
-				}
-				defer resp.Body.Close()
-				inputData, err = io.ReadAll(resp.Body)
-				if err != nil {
-					c.JSON(http.StatusBadRequest, gin.H{"error": "Erro ao ler o arquivo da URL"})
-					return
-				}
-			} else {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "Nenhum arquivo, base64 ou URL fornecido"})
-				return
-			}
-		}
+	inputData, err := getInputData(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	// Chama a função para converter o áudio e obter a duração
+	// Conversão e resposta
 	convertedData, duration, err := convertAudioToOpusWithDuration(inputData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Codifica o áudio convertido para base64
-	base64Audio := base64.StdEncoding.EncodeToString(convertedData)
-
-	// Retorna a resposta em JSON
 	c.JSON(http.StatusOK, gin.H{
 		"duration": duration,
-		"audio":    base64Audio,
+		"audio":    base64.StdEncoding.EncodeToString(convertedData),
 	})
 }
 
 func main() {
-	// Carrega o arquivo .env
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Println("Erro ao carregar o arquivo .env")
-	}
-
 	// Obtém a porta do arquivo .env ou usa a porta 8080 por padrão
 	port := os.Getenv("PORT")
 	if port == "" {
