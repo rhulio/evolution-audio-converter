@@ -141,7 +141,6 @@ A resposta será um JSON contendo a duração do áudio e o arquivo convertido e
 ## Licença
 
 Este projeto está sob a licença [MIT](LICENSE).
-```
 
 ### Resumo do Conteúdo:
 - **Requisitos**: Dependências necessárias (Go, Docker, FFmpeg).
