@@ -54,6 +54,7 @@ Crie um arquivo `.env` no diretório raiz do projeto com a seguinte configuraç�
 
 ```env
 PORT=4040
+API_KEY=sua_chave_api_secreta_aqui
 ```
 
 Isso define a porta onde o serviço será executado.
@@ -96,24 +97,31 @@ Você pode enviar requisições `POST` para o endpoint `/process-audio` com um a
 - **Base64** (para enviar o áudio codificado em base64)
 - **URL** (para enviar o link do arquivo de áudio)
 
+### Autenticação
+
+Todas as requisições devem incluir o cabeçalho `apikey` com o valor da `API_KEY` configurada no arquivo `.env`.
+
 ### Exemplo de Requisição via cURL
 
 #### Envio como Form-data
 
 ```bash
-curl -X POST -F "file=@caminho/do/audio.mp3" http://localhost:4040/process-audio
+curl -X POST -F "file=@caminho/do/audio.mp3" http://localhost:4040/process-audio \
+  -H "apikey: sua_chave_api_secreta_aqui"
 ```
 
 #### Envio como Base64
 
 ```bash
-curl -X POST -d "base64=$(base64 caminho/do/audio.mp3)" http://localhost:4040/process-audio
+curl -X POST -d "base64=$(base64 caminho/do/audio.mp3)" http://localhost:4040/process-audio \
+  -H "apikey: sua_chave_api_secreta_aqui"
 ```
 
 #### Envio como URL
 
 ```bash
-curl -X POST -d "url=https://exemplo.com/caminho/para/audio.mp3" http://localhost:4040/process-audio
+curl -X POST -d "url=https://exemplo.com/caminho/para/audio.mp3" http://localhost:4040/process-audio \
+  -H "apikey: sua_chave_api_secreta_aqui"
 ```
 
 ### Resposta

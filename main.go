@@ -18,6 +18,28 @@ import (
 	"github.com/joho/godotenv"
 )
 
+func validateAPIKey(c *gin.Context) bool {
+	apiKey := os.Getenv("API_KEY")
+	if apiKey == "" {
+		fmt.Println("API_KEY não configurada no arquivo .env")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erro interno no servidor"})
+		return false
+	}
+
+	requestApiKey := c.GetHeader("apikey")
+	if requestApiKey == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API_KEY não fornecida"})
+		return false
+	}
+
+	if requestApiKey != apiKey {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API_KEY inválida"})
+		return false
+	}
+
+	return true
+}
+
 func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 	cmd := exec.Command("ffmpeg", "-i", "pipe:0", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-f", "ogg", "pipe:1")
 
@@ -58,6 +80,10 @@ func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
 }
 
 func processAudio(c *gin.Context) {
+	if !validateAPIKey(c) {
+		return
+	}
+
 	var inputData []byte
 	var err error
 
