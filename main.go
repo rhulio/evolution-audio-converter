@@ -130,7 +130,7 @@ func getInputData(c *gin.Context) ([]byte, error) {
 		return fetchAudioFromURL(url)
 	}
 
-	return nil, errors.New("Nenhum arquivo, base64 ou URL fornecido")
+	return nil, errors.New("nenhum arquivo, base64 ou URL fornecido")
 }
 
 func processAudio(c *gin.Context) {
