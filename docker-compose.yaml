@@ -1,0 +1,19 @@
+services:
+  api:
+    container_name: evolution_audio_converter
+    image: atendai/evolution-audio-converter:latest
+    restart: always
+    ports:
+      - 4040:4040
+    networks:
+      - evolution-net
+    environment:
+      - PORT=4040
+    expose:
+      - 4040
+
+
+networks:
+  evolution-net:
+    name: evolution-net
+    driver: bridge
