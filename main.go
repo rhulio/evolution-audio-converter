@@ -29,13 +29,11 @@ var (
 )
 
 func init() {
-	// Carrega o arquivo .env
 	err := godotenv.Load()
 	if err != nil {
 		fmt.Println("Erro ao carregar o arquivo .env")
 	}
 
-	// Inicializa a variável apiKey
 	apiKey = os.Getenv("API_KEY")
 	if apiKey == "" {
 		fmt.Println("API_KEY não configurada no arquivo .env")
@@ -144,7 +142,6 @@ func processAudio(c *gin.Context) {
 		return
 	}
 
-	// Conversão e resposta
 	convertedData, duration, err := convertAudioToOpusWithDuration(inputData)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -158,7 +155,6 @@ func processAudio(c *gin.Context) {
 }
 
 func main() {
-	// Obtém a porta do arquivo .env ou usa a porta 8080 por padrão
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -166,9 +162,7 @@ func main() {
 
 	router := gin.Default()
 
-	// Endpoint para processar o áudio
 	router.POST("/process-audio", processAudio)
 
-	// Inicia o servidor na porta especificada
 	router.Run(":" + port)
 }
