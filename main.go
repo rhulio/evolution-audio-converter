@@ -69,9 +69,14 @@ func validateAPIKey(c *gin.Context) bool {
 	return true
 }
 
-func convertAudioToOpusWithDuration(inputData []byte) ([]byte, int, error) {
-	cmd := exec.Command("ffmpeg", "-i", "pipe:0", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-f", "ogg", "pipe:1")
-
+func convertAudio(inputData []byte, format string) ([]byte, int, error) {
+	var cmd *exec.Cmd
+	switch format {
+	case "mp3":
+		cmd = exec.Command("ffmpeg", "-i", "pipe:0", "-f", "mp3", "pipe:1")
+	default:
+		cmd = exec.Command("ffmpeg", "-i", "pipe:0", "-ac", "1", "-ar", "16000", "-c:a", "libopus", "-f", "ogg", "pipe:1")
+	}
 	outBuffer := bufferPool.Get().(*bytes.Buffer)
 	errBuffer := bufferPool.Get().(*bytes.Buffer)
 	defer bufferPool.Put(outBuffer)
@@ -151,7 +156,9 @@ func processAudio(c *gin.Context) {
 		return
 	}
 
-	convertedData, duration, err := convertAudioToOpusWithDuration(inputData)
+	format := c.DefaultPostForm("format", "ogg")
+
+	convertedData, duration, err := convertAudio(inputData, format)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -160,6 +167,7 @@ func processAudio(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"duration": duration,
 		"audio":    base64.StdEncoding.EncodeToString(convertedData),
+		"format":   format,
 	})
 }
 
