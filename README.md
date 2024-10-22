@@ -1,143 +1,154 @@
 # Evolution Audio Converter
 
-Este projeto é um micro serviço em Go que processa arquivos de áudio para whatsapp, os converte para o formato **opus** e retorna tanto a duração do áudio quanto o arquivo convertido em base64. O serviço aceita arquivos de áudio enviados como **form-data**, **base64** ou **URL**.
+This project is a microservice in Go that processes audio files, converts them to **opus** or **mp3** format, and returns both the duration of the audio and the converted file in base64. The service accepts audio files sent as **form-data**, **base64**, or **URL**.
 
-## Requisitos
+## Requirements
 
-Antes de começar, você precisará ter os seguintes itens instalados:
+Before starting, you'll need to have the following installed:
 
-- [Go](https://golang.org/doc/install) (versão 1.21 ou superior)
-- [Docker](https://docs.docker.com/get-docker/) (para rodar o projeto em um container)
-- [FFmpeg](https://ffmpeg.org/download.html) (para processamento de áudio)
+- [Go](https://golang.org/doc/install) (version 1.21 or higher)
+- [Docker](https://docs.docker.com/get-docker/) (to run the project in a container)
+- [FFmpeg](https://ffmpeg.org/download.html) (for audio processing)
 
-## Instalação
+## Installation
 
-### Clonar o Repositório
+### Clone the Repository
 
-Clone este repositório em sua máquina local:
+Clone this repository to your local machine:
 
 ```bash
 git clone https://github.com/EvolutionAPI/evolution-audio-converter.git
 cd evolution-audio-converter
 ```
 
-### Instalar Dependências
+### Install Dependencies
 
-Instale as dependências do projeto:
+Install the project dependencies:
 
 ```bash
 go mod tidy
 ```
 
-### Instalar o FFmpeg
+### Install FFmpeg
 
-O serviço depende do **FFmpeg** para converter o áudio. Certifique-se de que o FFmpeg está instalado no seu sistema.
+The service depends on **FFmpeg** to convert the audio. Make sure FFmpeg is installed on your system.
 
-- No Ubuntu:
+- On Ubuntu:
 
   ```bash
   sudo apt update
   sudo apt install ffmpeg
   ```
 
-- No MacOS (via Homebrew):
+- On macOS (via Homebrew):
 
   ```bash
   brew install ffmpeg
   ```
 
-- No Windows, baixe o FFmpeg [aqui](https://ffmpeg.org/download.html) e adicione-o ao `PATH` do sistema.
+- On Windows, download FFmpeg [here](https://ffmpeg.org/download.html) and add it to your system `PATH`.
 
-### Configuração
+### Configuration
 
-Crie um arquivo `.env` no diretório raiz do projeto com a seguinte configuração:
+Create a `.env` file in the project's root directory with the following configuration:
 
 ```env
 PORT=4040
-API_KEY=sua_chave_api_secreta_aqui
+API_KEY=your_secret_api_key_here
 ```
 
-Isso define a porta onde o serviço será executado.
+This defines the port where the service will run.
 
-## Rodando o Projeto
+## Running the Project
 
-### Localmente
+### Locally
 
-Para rodar o serviço localmente, use o seguinte comando:
+To run the service locally, use the following command:
 
 ```bash
 go run main.go -dev
 ```
 
-O servidor estará disponível em `http://localhost:4040`.
+The server will be available at `http://localhost:4040`.
 
-### Usando Docker
+### Using Docker
 
-Se preferir rodar o serviço em um container Docker, siga os passos abaixo:
+If you prefer to run the service in a Docker container, follow the steps below:
 
-1. **Buildar a imagem Docker**:
+1. **Build the Docker image**:
 
    ```bash
    docker build -t audio-service .
    ```
 
-2. **Rodar o container**:
+2. **Run the container**:
 
    ```bash
    docker run -p 4040:4040 --env-file=.env audio-service
    ```
 
-   Isso irá iniciar o container na porta especificada no arquivo `.env`.
+   This will start the container on the port specified in the `.env` file.
 
-## Como Usar
+## How to Use
 
-Você pode enviar requisições `POST` para o endpoint `/process-audio` com um arquivo de áudio nos seguintes formatos:
+You can send `POST` requests to the `/process-audio` endpoint with an audio file in the following formats:
 
-- **Form-data** (para enviar arquivos)
-- **Base64** (para enviar o áudio codificado em base64)
-- **URL** (para enviar o link do arquivo de áudio)
+- **Form-data** (to upload files)
+- **Base64** (to send the audio encoded in base64)
+- **URL** (to send the link to the audio file)
 
-### Autenticação
+### Authentication
 
-Todas as requisições devem incluir o cabeçalho `apikey` com o valor da `API_KEY` configurada no arquivo `.env`.
+All requests must include the `apikey` header with the value of the `API_KEY` configured in the `.env` file.
 
-### Exemplo de Requisição via cURL
+### Optional Parameters
 
-#### Envio como Form-data
+- **`format`**: You can specify the format for conversion by passing the `format` parameter in the request. Supported values:
+  - `mp3`
+  - `ogg` (default)
 
-```bash
-curl -X POST -F "file=@caminho/do/audio.mp3" http://localhost:4040/process-audio \
-  -H "apikey: sua_chave_api_secreta_aqui"
-```
+### Example Requests Using cURL
 
-#### Envio como Base64
-
-```bash
-curl -X POST -d "base64=$(base64 caminho/do/audio.mp3)" http://localhost:4040/process-audio \
-  -H "apikey: sua_chave_api_secreta_aqui"
-```
-
-#### Envio como URL
+#### Sending as Form-data
 
 ```bash
-curl -X POST -d "url=https://exemplo.com/caminho/para/audio.mp3" http://localhost:4040/process-audio \
-  -H "apikey: sua_chave_api_secreta_aqui"
+curl -X POST -F "file=@path/to/audio.mp3" http://localhost:4040/process-audio \
+  -F "format=ogg" \
+  -H "apikey: your_secret_api_key_here"
 ```
 
-### Resposta
+#### Sending as Base64
 
-A resposta será um JSON contendo a duração do áudio e o arquivo convertido em base64:
+```bash
+curl -X POST -d "base64=$(base64 path/to/audio.mp3)" http://localhost:4040/process-audio \
+  -d "format=ogg" \
+  -H "apikey: your_secret_api_key_here"
+```
+
+#### Sending as URL
+
+```bash
+curl -X POST -d "url=https://example.com/path/to/audio.mp3" http://localhost:4040/process-audio \
+  -d "format=ogg" \
+  -H "apikey: your_secret_api_key_here"
+```
+
+### Response
+
+The response will be a JSON object containing the audio duration and the converted audio file in base64:
 
 ```json
 {
   "duration": 120,
-  "audio": "UklGR... (base64 do arquivo)"
+  "audio": "UklGR... (base64 of the file)",
+  "format": "ogg"
 }
 ```
 
-- `duration`: A duração do áudio em segundos.
-- `audio`: O arquivo de áudio convertido para o formato opus, codificado em base64.
+- `duration`: The audio duration in seconds.
+- `audio`: The converted audio file encoded in base64.
+- `format`: The format of the converted file (`mp3` or `ogg`).
 
-## Licença
+## License
 
-Este projeto está sob a licença [MIT](LICENSE).
+This project is licensed under the [MIT](LICENSE) license.
