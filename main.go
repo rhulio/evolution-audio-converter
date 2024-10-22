@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,9 +31,16 @@ var (
 )
 
 func init() {
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Println("Erro ao carregar o arquivo .env")
+	devMode := flag.Bool("dev", false, "Rodar em modo de desenvolvimento")
+	flag.Parse()
+
+	if *devMode {
+		err := godotenv.Load()
+		if err != nil {
+			fmt.Println("Erro ao carregar o arquivo .env")
+		} else {
+			fmt.Println("Arquivo .env carregado com sucesso")
+		}
 	}
 
 	apiKey = os.Getenv("API_KEY")

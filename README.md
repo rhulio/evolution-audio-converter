@@ -66,7 +66,7 @@ Isso define a porta onde o serviço será executado.
 Para rodar o serviço localmente, use o seguinte comando:
 
 ```bash
-go run main.go
+go run main.go -dev
 ```
 
 O servidor estará disponível em `http://localhost:4040`.
