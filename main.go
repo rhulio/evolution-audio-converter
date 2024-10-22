@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
@@ -160,7 +161,22 @@ func main() {
 		port = "8080"
 	}
 
+	allowOriginsEnv := os.Getenv("CORS_ALLOW_ORIGINS")
+	var allowOrigins []string
+	if allowOriginsEnv != "" {
+		allowOrigins = strings.Split(allowOriginsEnv, ",")
+	} else {
+		allowOrigins = []string{"*"}
+	}
+
 	router := gin.Default()
+
+	config := cors.DefaultConfig()
+	config.AllowOrigins = allowOrigins
+	config.AllowMethods = []string{"POST", "GET", "OPTIONS"}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "apikey"}
+
+	router.Use(cors.New(config))
 
 	router.POST("/process-audio", processAudio)
 
