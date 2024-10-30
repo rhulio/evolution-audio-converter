@@ -28,6 +28,7 @@ var (
 			return new(bytes.Buffer)
 		},
 	}
+	allowedOrigins []string
 )
 
 func init() {
@@ -46,6 +47,13 @@ func init() {
 	apiKey = os.Getenv("API_KEY")
 	if apiKey == "" {
 		fmt.Println("API_KEY não configurada no arquivo .env")
+	}
+
+	allowOriginsEnv := os.Getenv("CORS_ALLOW_ORIGINS")
+	if allowOriginsEnv != "" {
+		allowedOrigins = strings.Split(allowOriginsEnv, ",")
+	} else {
+		allowedOrigins = []string{"*"}
 	}
 }
 
@@ -171,28 +179,50 @@ func processAudio(c *gin.Context) {
 	})
 }
 
+func validateOrigin(origin string) bool {
+	if len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*") {
+		return true
+	}
+
+	for _, allowed := range allowedOrigins {
+		if allowed == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func originMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" {
+			origin = c.Request.Header.Get("Referer")
+		}
+
+		if !validateOrigin(origin) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Origem não permitida"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	allowOriginsEnv := os.Getenv("CORS_ALLOW_ORIGINS")
-	var allowOrigins []string
-	if allowOriginsEnv != "" {
-		allowOrigins = strings.Split(allowOriginsEnv, ",")
-	} else {
-		allowOrigins = []string{"*"}
-	}
-
 	router := gin.Default()
 
 	config := cors.DefaultConfig()
-	config.AllowOrigins = allowOrigins
+	config.AllowOrigins = allowedOrigins
 	config.AllowMethods = []string{"POST", "GET", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "apikey"}
 
 	router.Use(cors.New(config))
+	router.Use(originMiddleware())
 
 	router.POST("/process-audio", processAudio)
 
