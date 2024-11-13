@@ -52,8 +52,10 @@ func init() {
 	allowOriginsEnv := os.Getenv("CORS_ALLOW_ORIGINS")
 	if allowOriginsEnv != "" {
 		allowedOrigins = strings.Split(allowOriginsEnv, ",")
+		fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
 	} else {
 		allowedOrigins = []string{"*"}
+		fmt.Println("Nenhuma origem específica configurada, permitindo todas (*)")
 	}
 }
 
@@ -182,43 +184,56 @@ func processAudio(c *gin.Context) {
 }
 
 func validateOrigin(origin string) bool {
+	fmt.Printf("Validando origem: %s\n", origin)
+	fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
+
 	if len(allowedOrigins) == 0 {
 		return true
 	}
 
 	if origin == "" {
-		return false
+		return true
 	}
 
 	for _, allowed := range allowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+
 		if allowed == "*" {
 			return true
 		}
 
 		if allowed == origin {
+			fmt.Printf("Origem %s corresponde a %s\n", origin, allowed)
 			return true
 		}
 	}
+
+	fmt.Printf("Origem %s não encontrada nas permitidas\n", origin)
 	return false
 }
 
 func originMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
+		fmt.Printf("\n=== Debug CORS ===\n")
+		fmt.Printf("Origin recebido: %s\n", origin)
+		fmt.Printf("Headers completos: %+v\n", c.Request.Header)
+		fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
+		fmt.Printf("=================\n")
+
 		if origin == "" {
 			origin = c.Request.Header.Get("Referer")
-			if origin != "" {
-				if i := strings.Index(origin[8:], "/"); i != -1 {
-					origin = origin[:i+8]
-				}
-			}
+			fmt.Printf("Origin vazio, usando Referer: %s\n", origin)
 		}
 
 		if !validateOrigin(origin) {
+			fmt.Printf("❌ Origem rejeitada: %s\n", origin)
 			c.JSON(http.StatusForbidden, gin.H{"error": "Origem não permitida"})
 			c.Abort()
 			return
 		}
+
+		fmt.Printf("✅ Origem aceita: %s\n", origin)
 		c.Next()
 	}
 }
@@ -235,6 +250,7 @@ func main() {
 	config.AllowOrigins = allowedOrigins
 	config.AllowMethods = []string{"POST", "GET", "OPTIONS"}
 	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "apikey"}
+	config.AllowCredentials = true
 
 	router.Use(cors.New(config))
 	router.Use(originMiddleware())
