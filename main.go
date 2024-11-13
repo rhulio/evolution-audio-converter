@@ -182,11 +182,19 @@ func processAudio(c *gin.Context) {
 }
 
 func validateOrigin(origin string) bool {
-	if len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*") {
+	if len(allowedOrigins) == 0 {
 		return true
 	}
 
+	if origin == "" {
+		return false
+	}
+
 	for _, allowed := range allowedOrigins {
+		if allowed == "*" {
+			return true
+		}
+
 		if allowed == origin {
 			return true
 		}
@@ -199,6 +207,11 @@ func originMiddleware() gin.HandlerFunc {
 		origin := c.Request.Header.Get("Origin")
 		if origin == "" {
 			origin = c.Request.Header.Get("Referer")
+			if origin != "" {
+				if i := strings.Index(origin[8:], "/"); i != -1 {
+					origin = origin[:i+8]
+				}
+			}
 		}
 
 		if !validateOrigin(origin) {
