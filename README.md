@@ -1,6 +1,6 @@
 # Evolution Audio Converter
 
-This project is a microservice in Go that processes audio files, converts them to **opus** or **mp3** format, and returns both the duration of the audio and the converted file in base64. The service accepts audio files sent as **form-data**, **base64**, or **URL**.
+This project is a microservice in Go that processes audio files, converts them to **opus** or **mp3** format, and returns both the duration of the audio and the converted file (as base64 or S3 URL). The service accepts audio files sent as **form-data**, **base64**, or **URL**.
 
 ## Requirements
 
@@ -50,16 +50,16 @@ The service depends on **FFmpeg** to convert the audio. Make sure FFmpeg is inst
 
 ### Configuration
 
-Create a `.env` file in the project's root directory with the following configuration:
+Create a `.env` file in the project's root directory. Here are the available configuration options:
+
+#### Basic Configuration
 
 ```env
 PORT=4040
 API_KEY=your_secret_api_key_here
 ```
 
-### Transcription Configuration
-
-To enable audio transcription, configure the following variables in the `.env` file:
+#### Transcription Configuration
 
 ```env
 ENABLE_TRANSCRIPTION=true
@@ -69,17 +69,44 @@ GROQ_API_KEY=your_groq_key_here
 TRANSCRIPTION_LANGUAGE=en  # Default transcription language (optional)
 ```
 
-- `ENABLE_TRANSCRIPTION`: Enables or disables the transcription feature
-- `TRANSCRIPTION_PROVIDER`: Chooses the AI provider for transcription (openai or groq)
-- `OPENAI_API_KEY`: Your OpenAI API key (required if using openai)
-- `GROQ_API_KEY`: Your Groq API key (required if using groq)
-- `TRANSCRIPTION_LANGUAGE`: Sets the default transcription language (optional)
+#### Storage Configuration
+
+```env
+ENABLE_S3_STORAGE=true
+S3_ENDPOINT=play.min.io
+S3_ACCESS_KEY=your_access_key_here
+S3_SECRET_KEY=your_secret_key_here
+S3_BUCKET_NAME=audio-files
+S3_REGION=us-east-1
+S3_USE_SSL=true
+S3_URL_EXPIRATION=24h
+```
+
+### Storage Options
+
+The service supports two storage modes for the converted audio:
+
+1. **Base64 (default)**: Returns the audio file encoded in base64 format
+2. **S3 Compatible Storage**: Uploads to S3-compatible storage (AWS S3, MinIO, etc.) and returns a presigned URL
+
+When S3 storage is enabled, the response will include a `url` instead of the `audio` field:
+
+```json
+{
+  "duration": 120,
+  "format": "ogg",
+  "url": "https://your-s3-endpoint/bucket/file.ogg?signature...",
+  "transcription": "Transcribed text here..." // if transcription was requested
+}
+```
+
+If S3 upload fails, the service automatically falls back to base64 encoding.
 
 ## Running the Project
 
 ### Locally
 
-To run the service locally, use the following command:
+To run the service locally:
 
 ```bash
 go run main.go -dev
@@ -88,8 +115,6 @@ go run main.go -dev
 The server will be available at `http://localhost:4040`.
 
 ### Using Docker
-
-If you prefer to run the service in a Docker container, follow the steps below:
 
 1. **Build the Docker image**:
 
@@ -103,112 +128,96 @@ If you prefer to run the service in a Docker container, follow the steps below:
    docker run -p 4040:4040 --env-file=.env audio-service
    ```
 
-   This will start the container on the port specified in the `.env` file.
-
-## How to Use
-
-You can send `POST` requests to the `/process-audio` endpoint with an audio file in the following formats:
-
-- **Form-data** (to upload files)
-- **Base64** (to send the audio encoded in base64)
-- **URL** (to send the link to the audio file)
+## API Usage
 
 ### Authentication
 
-All requests must include the `apikey` header with the value of the `API_KEY` configured in the `.env` file.
+All requests must include the `apikey` header with your API key.
 
-### Optional Parameters
+### Endpoints
 
-- **`format`**: You can specify the format for conversion by passing the `format` parameter in the request. Supported values:
-  - `mp3`
-  - `ogg` (default)
+#### Process Audio
 
-### Audio Transcription
+`POST /process-audio`
 
-You can get the audio transcription in two ways:
+Accepts audio files in these formats:
 
-1. Along with audio processing by adding the `transcribe=true` parameter:
+- Form-data
+- Base64
+- URL
+
+Optional parameters:
+
+- `format`: Output format (`mp3` or `ogg`, default: `ogg`)
+- `transcribe`: Enable transcription (`true` or `false`)
+- `language`: Transcription language code (e.g., "en", "es", "pt")
+
+#### Transcribe Only
+
+`POST /transcribe`
+
+Transcribes audio without format conversion.
+
+Optional parameters:
+
+- `language`: Transcription language code
+
+### Example Requests
+
+#### Form-data Upload
 
 ```bash
 curl -X POST -F "file=@audio.mp3" \
+  -F "format=ogg" \
   -F "transcribe=true" \
   -F "language=en" \
   http://localhost:4040/process-audio \
   -H "apikey: your_secret_api_key_here"
 ```
 
-2. Using the specific transcription endpoint:
+#### Base64 Upload
 
 ```bash
-curl -X POST -F "file=@audio.mp3" \
-  -F "language=en" \
-  http://localhost:4040/transcribe \
+curl -X POST \
+  -d "base64=$(base64 audio.mp3)" \
+  -d "format=ogg" \
+  http://localhost:4040/process-audio \
   -H "apikey: your_secret_api_key_here"
 ```
 
-Optional parameters:
-- `language`: Audio language code (e.g., "en", "es", "pt"). If not specified, it will use the value defined in `TRANSCRIPTION_LANGUAGE` in `.env`. If neither is defined, the system will try to automatically detect the language.
+#### URL Upload
 
-The response will include the `transcription` field with the transcribed text:
-
-```json
-{
-  "transcription": "Transcribed text here..."
-}
+```bash
+curl -X POST \
+  -d "url=https://example.com/audio.mp3" \
+  -d "format=ogg" \
+  http://localhost:4040/process-audio \
+  -H "apikey: your_secret_api_key_here"
 ```
 
-When used with audio processing (`/process-audio`), the response will include both audio data and transcription:
+### Response Format
+
+With S3 storage disabled (default):
 
 ```json
 {
   "duration": 120,
   "audio": "UklGR... (base64 of the file)",
   "format": "ogg",
-  "transcription": "Transcribed text here..."
+  "transcription": "Transcribed text here..." // if requested
 }
 ```
 
-### Example Requests Using cURL
-
-#### Sending as Form-data
-
-```bash
-curl -X POST -F "file=@path/to/audio.mp3" http://localhost:4040/process-audio \
-  -F "format=ogg" \
-  -H "apikey: your_secret_api_key_here"
-```
-
-#### Sending as Base64
-
-```bash
-curl -X POST -d "base64=$(base64 path/to/audio.mp3)" http://localhost:4040/process-audio \
-  -d "format=ogg" \
-  -H "apikey: your_secret_api_key_here"
-```
-
-#### Sending as URL
-
-```bash
-curl -X POST -d "url=https://example.com/path/to/audio.mp3" http://localhost:4040/process-audio \
-  -d "format=ogg" \
-  -H "apikey: your_secret_api_key_here"
-```
-
-### Response
-
-The response will be a JSON object containing the audio duration and the converted audio file in base64:
+With S3 storage enabled:
 
 ```json
 {
   "duration": 120,
-  "audio": "UklGR... (base64 of the file)",
-  "format": "ogg"
+  "url": "https://your-s3-endpoint/bucket/file.ogg?signature...",
+  "format": "ogg",
+  "transcription": "Transcribed text here..." // if requested
 }
 ```
-
-- `duration`: The audio duration in seconds.
-- `audio`: The converted audio file encoded in base64.
-- `format`: The format of the converted file (`mp3` or `ogg`).
 
 ## License
 

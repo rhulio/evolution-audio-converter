@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -17,9 +18,13 @@ import (
 	"strings"
 	"sync"
 
+	"time"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 var (
@@ -36,6 +41,15 @@ var (
 	openaiAPIKey                 string
 	groqAPIKey                   string
 	defaultTranscriptionLanguage string
+	enableS3Storage              bool
+	s3Endpoint                   string
+	s3AccessKey                  string
+	s3SecretKey                  string
+	s3BucketName                 string
+	s3Region                     string
+	s3UseSSL                     bool
+	s3Client                     *minio.Client
+	s3URLExpiration              time.Duration
 )
 
 func init() {
@@ -70,6 +84,57 @@ func init() {
 	openaiAPIKey = os.Getenv("OPENAI_API_KEY")
 	groqAPIKey = os.Getenv("GROQ_API_KEY")
 	defaultTranscriptionLanguage = os.Getenv("TRANSCRIPTION_LANGUAGE")
+
+	// Configuração do S3
+	enableS3Storage = os.Getenv("ENABLE_S3_STORAGE") == "true"
+	if enableS3Storage {
+		s3Endpoint = os.Getenv("S3_ENDPOINT")
+		s3AccessKey = os.Getenv("S3_ACCESS_KEY")
+		s3SecretKey = os.Getenv("S3_SECRET_KEY")
+		s3BucketName = os.Getenv("S3_BUCKET_NAME")
+		s3Region = os.Getenv("S3_REGION")
+		s3UseSSL = os.Getenv("S3_USE_SSL") == "true"
+
+		// Parse URL expiration duration, default to 24 hours
+		expiration := os.Getenv("S3_URL_EXPIRATION")
+		if expiration == "" {
+			expiration = "24h"
+		}
+		var err error
+		s3URLExpiration, err = time.ParseDuration(expiration)
+		if err != nil {
+			fmt.Printf("Invalid S3_URL_EXPIRATION format, using default 24h: %v\n", err)
+			s3URLExpiration = 24 * time.Hour
+		}
+
+		// Initialize MinIO client
+		minioClient, err := minio.New(s3Endpoint, &minio.Options{
+			Creds:  credentials.NewStaticV4(s3AccessKey, s3SecretKey, ""),
+			Secure: s3UseSSL,
+			Region: s3Region,
+		})
+		if err != nil {
+			fmt.Printf("Error initializing S3 client: %v\n", err)
+			return
+		}
+		s3Client = minioClient
+
+		// Create bucket if it doesn't exist
+		exists, err := s3Client.BucketExists(context.Background(), s3BucketName)
+		if err != nil {
+			fmt.Printf("Error checking bucket existence: %v\n", err)
+			return
+		}
+
+		if !exists {
+			err = s3Client.MakeBucket(context.Background(), s3BucketName, minio.MakeBucketOptions{Region: s3Region})
+			if err != nil {
+				fmt.Printf("Error creating bucket: %v\n", err)
+				return
+			}
+			fmt.Printf("Created bucket: %s\n", s3BucketName)
+		}
+	}
 }
 
 func validateAPIKey(c *gin.Context) bool {
@@ -173,6 +238,11 @@ func getInputData(c *gin.Context) ([]byte, error) {
 func transcribeAudio(audioData []byte, language string) (string, error) {
 	if !enableTranscription {
 		return "", errors.New("transcription is not enabled")
+	}
+
+	// Se nenhum idioma foi especificado, use o padrão do .env
+	if language == "" {
+		language = defaultTranscriptionLanguage
 	}
 
 	switch transcriptionProvider {
@@ -339,6 +409,43 @@ func transcribeWithGroq(audioData []byte, language string) (string, error) {
 	return result.Text, nil
 }
 
+func uploadToS3(data []byte, format string) (string, error) {
+	if !enableS3Storage || s3Client == nil {
+		return "", errors.New("S3 storage is not enabled or properly configured")
+	}
+
+	// Generate unique filename
+	filename := fmt.Sprintf("%d.%s", time.Now().UnixNano(), format)
+	contentType := fmt.Sprintf("audio/%s", format)
+
+	// Upload to S3
+	_, err := s3Client.PutObject(
+		context.Background(),
+		s3BucketName,
+		filename,
+		bytes.NewReader(data),
+		int64(len(data)),
+		minio.PutObjectOptions{ContentType: contentType},
+	)
+	if err != nil {
+		return "", fmt.Errorf("error uploading to S3: %v", err)
+	}
+
+	// Generate presigned URL
+	url, err := s3Client.PresignedGetObject(
+		context.Background(),
+		s3BucketName,
+		filename,
+		s3URLExpiration,
+		nil,
+	)
+	if err != nil {
+		return "", fmt.Errorf("error generating presigned URL: %v", err)
+	}
+
+	return url.String(), nil
+}
+
 func processAudio(c *gin.Context) {
 	if !validateAPIKey(c) {
 		return
@@ -358,26 +465,34 @@ func processAudio(c *gin.Context) {
 		return
 	}
 
-	var transcription string
-	if c.DefaultPostForm("transcribe", "false") == "true" {
-		language := c.DefaultPostForm("language", "")
-		trans, err := transcribeAudio(convertedData, language)
-		if err != nil {
-			fmt.Printf("Erro na transcrição: %v\n", err)
-			// Continua sem a transcrição
-		} else {
-			transcription = trans
-		}
-	}
-
 	response := gin.H{
 		"duration": duration,
-		"audio":    base64.StdEncoding.EncodeToString(convertedData),
 		"format":   format,
 	}
 
-	if transcription != "" {
-		response["transcription"] = transcription
+	// Handle S3 upload if enabled
+	if enableS3Storage {
+		url, err := uploadToS3(convertedData, format)
+		if err != nil {
+			fmt.Printf("Error uploading to S3: %v\n", err)
+			// Fallback to base64 if S3 upload fails
+			response["audio"] = base64.StdEncoding.EncodeToString(convertedData)
+		} else {
+			response["url"] = url
+		}
+	} else {
+		response["audio"] = base64.StdEncoding.EncodeToString(convertedData)
+	}
+
+	// Handle transcription if requested
+	if c.DefaultPostForm("transcribe", "false") == "true" {
+		language := c.DefaultPostForm("language", "")
+		transcription, err := transcribeAudio(convertedData, language)
+		if err != nil {
+			fmt.Printf("Error in transcription: %v\n", err)
+		} else {
+			response["transcription"] = transcription
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -456,6 +571,7 @@ func transcribeOnly(c *gin.Context) {
 		return
 	}
 
+	// Pega o idioma da requisição ou usa vazio para usar o padrão do .env
 	language := c.DefaultPostForm("language", "")
 	transcription, err := transcribeAudio(convertedData, language)
 	if err != nil {
