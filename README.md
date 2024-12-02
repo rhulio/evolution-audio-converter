@@ -57,7 +57,23 @@ PORT=4040
 API_KEY=your_secret_api_key_here
 ```
 
-This defines the port where the service will run.
+### Transcription Configuration
+
+To enable audio transcription, configure the following variables in the `.env` file:
+
+```env
+ENABLE_TRANSCRIPTION=true
+TRANSCRIPTION_PROVIDER=openai  # or groq
+OPENAI_API_KEY=your_openai_key_here
+GROQ_API_KEY=your_groq_key_here
+TRANSCRIPTION_LANGUAGE=en  # Default transcription language (optional)
+```
+
+- `ENABLE_TRANSCRIPTION`: Enables or disables the transcription feature
+- `TRANSCRIPTION_PROVIDER`: Chooses the AI provider for transcription (openai or groq)
+- `OPENAI_API_KEY`: Your OpenAI API key (required if using openai)
+- `GROQ_API_KEY`: Your Groq API key (required if using groq)
+- `TRANSCRIPTION_LANGUAGE`: Sets the default transcription language (optional)
 
 ## Running the Project
 
@@ -106,6 +122,51 @@ All requests must include the `apikey` header with the value of the `API_KEY` co
 - **`format`**: You can specify the format for conversion by passing the `format` parameter in the request. Supported values:
   - `mp3`
   - `ogg` (default)
+
+### Audio Transcription
+
+You can get the audio transcription in two ways:
+
+1. Along with audio processing by adding the `transcribe=true` parameter:
+
+```bash
+curl -X POST -F "file=@audio.mp3" \
+  -F "transcribe=true" \
+  -F "language=en" \
+  http://localhost:4040/process-audio \
+  -H "apikey: your_secret_api_key_here"
+```
+
+2. Using the specific transcription endpoint:
+
+```bash
+curl -X POST -F "file=@audio.mp3" \
+  -F "language=en" \
+  http://localhost:4040/transcribe \
+  -H "apikey: your_secret_api_key_here"
+```
+
+Optional parameters:
+- `language`: Audio language code (e.g., "en", "es", "pt"). If not specified, it will use the value defined in `TRANSCRIPTION_LANGUAGE` in `.env`. If neither is defined, the system will try to automatically detect the language.
+
+The response will include the `transcription` field with the transcribed text:
+
+```json
+{
+  "transcription": "Transcribed text here..."
+}
+```
+
+When used with audio processing (`/process-audio`), the response will include both audio data and transcription:
+
+```json
+{
+  "duration": 120,
+  "audio": "UklGR... (base64 of the file)",
+  "format": "ogg",
+  "transcription": "Transcribed text here..."
+}
+```
 
 ### Example Requests Using cURL
 

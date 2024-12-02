@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,51 +30,62 @@ var (
 			return new(bytes.Buffer)
 		},
 	}
-	allowedOrigins []string
+	allowedOrigins               []string
+	enableTranscription          bool
+	transcriptionProvider        string
+	openaiAPIKey                 string
+	groqAPIKey                   string
+	defaultTranscriptionLanguage string
 )
 
 func init() {
-	devMode := flag.Bool("dev", false, "Rodar em modo de desenvolvimento")
+	devMode := flag.Bool("dev", false, "Run in development mode")
 	flag.Parse()
 
 	if *devMode {
 		err := godotenv.Load()
 		if err != nil {
-			fmt.Println("Erro ao carregar o arquivo .env")
+			fmt.Println("Error loading .env file")
 		} else {
-			fmt.Println("Arquivo .env carregado com sucesso")
+			fmt.Println(".env file loaded successfully")
 		}
 	}
 
 	apiKey = os.Getenv("API_KEY")
 	if apiKey == "" {
-		fmt.Println("API_KEY não configurada no arquivo .env")
+		fmt.Println("API_KEY not configured in .env file")
 	}
 
 	allowOriginsEnv := os.Getenv("CORS_ALLOW_ORIGINS")
 	if allowOriginsEnv != "" {
 		allowedOrigins = strings.Split(allowOriginsEnv, ",")
-		fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
+		fmt.Printf("Allowed origins: %v\n", allowedOrigins)
 	} else {
 		allowedOrigins = []string{"*"}
-		fmt.Println("Nenhuma origem específica configurada, permitindo todas (*)")
+		fmt.Println("No specific origins configured, allowing all (*)")
 	}
+
+	enableTranscription = os.Getenv("ENABLE_TRANSCRIPTION") == "true"
+	transcriptionProvider = os.Getenv("TRANSCRIPTION_PROVIDER")
+	openaiAPIKey = os.Getenv("OPENAI_API_KEY")
+	groqAPIKey = os.Getenv("GROQ_API_KEY")
+	defaultTranscriptionLanguage = os.Getenv("TRANSCRIPTION_LANGUAGE")
 }
 
 func validateAPIKey(c *gin.Context) bool {
 	if apiKey == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Erro interno no servidor"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return false
 	}
 
 	requestApiKey := c.GetHeader("apikey")
 	if requestApiKey == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "API_KEY não fornecida"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "API_KEY not provided"})
 		return false
 	}
 
 	if requestApiKey != apiKey {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "API_KEY inválida"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API_KEY"})
 		return false
 	}
 
@@ -154,7 +167,176 @@ func getInputData(c *gin.Context) ([]byte, error) {
 		return fetchAudioFromURL(url)
 	}
 
-	return nil, errors.New("nenhum arquivo, base64 ou URL fornecido")
+	return nil, errors.New("no file, base64 or URL provided")
+}
+
+func transcribeAudio(audioData []byte, language string) (string, error) {
+	if !enableTranscription {
+		return "", errors.New("transcription is not enabled")
+	}
+
+	switch transcriptionProvider {
+	case "openai":
+		return transcribeWithOpenAI(audioData, language)
+	case "groq":
+		return transcribeWithGroq(audioData, language)
+	default:
+		return "", errors.New("invalid transcription provider")
+	}
+}
+
+func transcribeWithOpenAI(audioData []byte, language string) (string, error) {
+	if openaiAPIKey == "" {
+		return "", errors.New("OpenAI API key not configured")
+	}
+
+	// Se nenhum idioma foi especificado, use o padrão
+	if language == "" {
+		language = defaultTranscriptionLanguage
+	}
+
+	// Salvar temporariamente o arquivo
+	tempFile, err := os.CreateTemp("", "audio-*.ogg")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tempFile.Name())
+
+	if _, err := tempFile.Write(audioData); err != nil {
+		return "", err
+	}
+	tempFile.Close()
+
+	url := "https://api.openai.com/v1/audio/transcriptions"
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Adicionar o arquivo
+	file, err := os.Open(tempFile.Name())
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	part, err := writer.CreateFormFile("file", "audio.ogg")
+	if err != nil {
+		return "", err
+	}
+	io.Copy(part, file)
+
+	// Adicionar modelo e idioma
+	writer.WriteField("model", "whisper-1")
+	if language != "" {
+		writer.WriteField("language", language)
+	}
+
+	writer.Close()
+
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+openaiAPIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("erro na API OpenAI (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Text, nil
+}
+
+func transcribeWithGroq(audioData []byte, language string) (string, error) {
+	if groqAPIKey == "" {
+		return "", errors.New("Groq API key not configured")
+	}
+
+	// Se nenhum idioma foi especificado, use o padrão
+	if language == "" {
+		language = defaultTranscriptionLanguage
+	}
+
+	// Salvar temporariamente o arquivo
+	tempFile, err := os.CreateTemp("", "audio-*.ogg")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tempFile.Name())
+
+	if _, err := tempFile.Write(audioData); err != nil {
+		return "", err
+	}
+	tempFile.Close()
+
+	url := "https://api.groq.com/openai/v1/audio/transcriptions"
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Adicionar o arquivo
+	file, err := os.Open(tempFile.Name())
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	part, err := writer.CreateFormFile("file", "audio.ogg")
+	if err != nil {
+		return "", err
+	}
+	io.Copy(part, file)
+
+	// Adicionar modelo e configurações
+	writer.WriteField("model", "whisper-large-v3-turbo") // modelo mais rápido e com bom custo-benefício
+	if language != "" {
+		writer.WriteField("language", language)
+	}
+	writer.WriteField("response_format", "json")
+	writer.WriteField("temperature", "0.0") // mais preciso
+
+	writer.Close()
+
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+groqAPIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("erro na API Groq (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	return result.Text, nil
 }
 
 func processAudio(c *gin.Context) {
@@ -176,16 +358,34 @@ func processAudio(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	var transcription string
+	if c.DefaultPostForm("transcribe", "false") == "true" {
+		language := c.DefaultPostForm("language", "")
+		trans, err := transcribeAudio(convertedData, language)
+		if err != nil {
+			fmt.Printf("Erro na transcrição: %v\n", err)
+			// Continua sem a transcrição
+		} else {
+			transcription = trans
+		}
+	}
+
+	response := gin.H{
 		"duration": duration,
 		"audio":    base64.StdEncoding.EncodeToString(convertedData),
 		"format":   format,
-	})
+	}
+
+	if transcription != "" {
+		response["transcription"] = transcription
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func validateOrigin(origin string) bool {
-	fmt.Printf("Validando origem: %s\n", origin)
-	fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
+	fmt.Printf("Validating origin: %s\n", origin)
+	fmt.Printf("Allowed origins: %v\n", allowedOrigins)
 
 	if len(allowedOrigins) == 0 {
 		return true
@@ -203,39 +403,69 @@ func validateOrigin(origin string) bool {
 		}
 
 		if allowed == origin {
-			fmt.Printf("Origem %s corresponde a %s\n", origin, allowed)
+			fmt.Printf("Origin %s matches %s\n", origin, allowed)
 			return true
 		}
 	}
 
-	fmt.Printf("Origem %s não encontrada nas permitidas\n", origin)
+	fmt.Printf("Origin %s not found in allowed origins\n", origin)
 	return false
 }
 
 func originMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		fmt.Printf("\n=== Debug CORS ===\n")
-		fmt.Printf("Origin recebido: %s\n", origin)
-		fmt.Printf("Headers completos: %+v\n", c.Request.Header)
-		fmt.Printf("Origens permitidas: %v\n", allowedOrigins)
+		fmt.Printf("\n=== CORS Debug ===\n")
+		fmt.Printf("Received origin: %s\n", origin)
+		fmt.Printf("Complete headers: %+v\n", c.Request.Header)
+		fmt.Printf("Allowed origins: %v\n", allowedOrigins)
 		fmt.Printf("=================\n")
 
 		if origin == "" {
 			origin = c.Request.Header.Get("Referer")
-			fmt.Printf("Origin vazio, usando Referer: %s\n", origin)
+			fmt.Printf("Empty origin, using Referer: %s\n", origin)
 		}
 
 		if !validateOrigin(origin) {
-			fmt.Printf("❌ Origem rejeitada: %s\n", origin)
-			c.JSON(http.StatusForbidden, gin.H{"error": "Origem não permitida"})
+			fmt.Printf("❌ Origin rejected: %s\n", origin)
+			c.JSON(http.StatusForbidden, gin.H{"error": "Origin not allowed"})
 			c.Abort()
 			return
 		}
 
-		fmt.Printf("✅ Origem aceita: %s\n", origin)
+		fmt.Printf("✅ Origin accepted: %s\n", origin)
 		c.Next()
 	}
+}
+
+func transcribeOnly(c *gin.Context) {
+	if !validateAPIKey(c) {
+		return
+	}
+
+	inputData, err := getInputData(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Converter para ogg primeiro
+	convertedData, _, err := convertAudio(inputData, "ogg")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	language := c.DefaultPostForm("language", "")
+	transcription, err := transcribeAudio(convertedData, language)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"transcription": transcription,
+	})
 }
 
 func main() {
@@ -256,6 +486,7 @@ func main() {
 	router.Use(originMiddleware())
 
 	router.POST("/process-audio", processAudio)
+	router.POST("/transcribe", transcribeOnly)
 
 	router.Run(":" + port)
 }
