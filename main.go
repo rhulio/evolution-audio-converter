@@ -377,7 +377,7 @@ func transcribeWithGroq(audioData []byte, language string) (string, error) {
 	io.Copy(part, file)
 
 	// Adicionar modelo e configurações
-	writer.WriteField("model", "whisper-large-v3-turbo") // modelo mais rápido e com bom custo-benefício
+	writer.WriteField("model", "whisper-large-v3") // modelo mais rápido e com bom custo-benefício
 	if language != "" {
 		writer.WriteField("language", language)
 	}
